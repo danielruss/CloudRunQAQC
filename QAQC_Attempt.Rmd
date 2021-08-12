@@ -1,0 +1,89 @@
+---
+title: "Scheduling a QA_QC job for connect"
+output:
+  html_document:
+    df_print: paged
+---
+
+This assumes you have a  GCP account and appropriate permissions to the R dev/stage/prod environments
+
+make sure you have GoogleCloudRunner installed...
+
+First, Let's define some GCP Project related information: You will need to set this appropriately  Then you will need the oauth2 from the QAQC service account
+
+The JSON file pointed to by the variable *oauth_client_id_file* contain the client id/secret for project.  Note: this MUST be a desktop application...
+The other JSON file in gar_auth_service is the service account 
+see [Mark Edmonodson's GCP setup page for more details](https://code.markedmondson.me/googleCloudRunner/articles/setup-gcp.html) particularly step 5.
+We wont set it up in the Renviornment, because we want to be able to switch between projects.
+```{r}
+library(googleCloudRunner)
+library(googleAuthR)
+
+cr_project_set("nih-nci-dceg-druss")
+cr_bucket_set("nih-nci-dceg-druss-bucket1")
+cr_region_set("us-east1")
+my_gcs_bucket <- "gs://nih-nci-dceg-druss-bucket1"
+
+oauth_client_id_file <- "~/.gcpkeys/TestOAuthWithR.json"
+token <- gar_auth_service("~/.gcpkeys/druss-cloud-build-R.json",
+                          scope = "https://www.googleapis.com/auth/cloud-platform")
+cr_email_set(token$secrets$client_email)
+```
+
+
+
+first lets deploy raw R code..  
+```{r}
+cr_deploy_r("myScripts/script1.R")
+```
+Note: that this build first pulls the rocker/latest from the default docker repository, builds the container, then runs the container.  The process takes over a minute to run a script that takes less than 0.2 sec on my mac laptop 
+
+By the way, you can have each R command as separate entry in a vector...
+```{r}
+r_code <- c("list.files()","sessionInfo()")
+cr_deploy_r(r_code)
+```
+
+You can schedule to run a job at 20 minutes after the hour..
+```{r}
+cr_deploy_r("myScripts/script1.R",schedule = '20 * * * *')
+```
+
+
+I moved the rocker/r-ver:4.1.0 from the docker repo to a gcp.  On my laptop I ran the commmands below.  I also tested, you can run the commands in google cloud shell, so you dont need to install docker.
+```
+docker pull rocker/r-ver:4.1.0
+docker tag rocker/r-ver:4.1.0  us.gcr.io/nih-nci-dceg-druss/r-ver:4.1.0
+docker push  us.gcr.io/nih-nci-dceg-druss/r-ver:4.1.0
+```
+
+
+
+lets try to run using the image in gcp's container registry 
+```{r}
+
+bs <- cr_buildstep_r(
+    "myScripts/script1.R",
+    prefix = "",
+    name = "us.gcr.io/nih-nci-dceg-druss/r-ver:4.1.0"
+  )
+my_build <- cr_build_yaml(bs, timeout = 2400)
+cr_build(my_build)
+```
+This took about 20 seconds.
+
+
+```{r}
+cr_deploy_r("myScripts/script1.R",
+            schedule = '20 * * * *',
+            run_name = 'daniels-test-script',
+            r_image = "us.gcr.io/nih-nci-dceg-druss/r-ver:4.1.0",prefix="")
+```
+
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Cmd+Option+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Cmd+Shift+K* to preview the HTML file). 
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+
